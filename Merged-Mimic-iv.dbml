@@ -25,7 +25,6 @@ Table merged_table_admission_day {
   icustays_outtime      datetime [note: 'from icustays']
   los                   double   [note: 'from icustays']
 
-  all_vanco_itemid     integer  [note: 'from all_vanco']
   all_vanco_charttime  datetime [note: 'from all_vanco']
   all_vanco_value      varchar  [note: 'from all_vanco']
   all_vanco_valuenum   double   [note: 'from all_vanco']
