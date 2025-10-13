@@ -146,40 +146,15 @@ Table merged_table_admission_day {
   poe_last_transaction_type  varchar [note: 'from poe']
   poe_last_order_status      varchar [note: 'from poe']
 
-  itemid_other_labs   integer  [note: 'from other_labs_raw']
-  charttime_other_labs datetime [note: 'from other_labs_raw']
-  value_other_labs    varchar  [note: 'from other_labs_raw']
-  valuenum_other_labs double   [note: 'from other_labs_raw']
-  valueuom_other_labs varchar  [note: 'from other_labs_raw']
-  flag_other_labs     varchar  [note: 'from other_labs_raw']
-
-  //////////////////////
-  // ستون‌های اضافه‌شده از جدول patients (فقط مهم‌ها)
-  //////////////////////
-  dob_patient         date     [note: 'date of birth from patients (may be shifted in MIMIC)']
-  gender_patient      varchar  [note: 'from patients']
-  age_at_admit        integer  [note: 'floor(years) at admittime; derived: admittime - dob_patient']
-
-  //////////////////////
-  // ستون‌های اضافه‌شده از caregivers (فقط برچسب/نام کاربردی)
-  //////////////////////
-  caregiver_label_ingredient    varchar [note: 'label/role lookup for caregiver_id_ingredient (from caregivers)']
-  caregiver_label_input         varchar [note: 'label/role lookup for caregiver_id_input (from caregivers)']
-  caregiver_label_output        varchar [note: 'label/role lookup for caregiver_id_output (from caregivers)']
-  caregiver_label_procedure     varchar [note: 'label/role lookup for caregiver_id_procedure (from caregivers)']
-  caregiver_label_emar          varchar [note: 'label/role lookup for pharmacy_id_emar or caregiver if available']
-
-  //////////////////////
-  // ستون‌های اضافه‌شده از دیکشنری d_icd_diagnoses (توضیحات کد)
-  //////////////////////
-  icd_description_diagnoses     varchar [note: 'long_title mapping for icd_code_diagnoses from d_icd_diagnoses']
-  icd_description_procedures    varchar [note: 'long_title mapping for icd_code_procedures from d_icd_procedures']
-
-  //////////////////////
-  // ستون‌های اضافه‌شده از HCPCS / hcpcsevents (فقط کد/توضیح کاربردی)
-  //////////////////////
-  hcpcs_code_event              varchar [note: 'HCPCS/CPT-like code if present (from hcpcsevents / d_hcpcs)']
-  hcpcs_description_event       varchar [note: 'human-readable description for hcpcs_code_event (from d_hcpcs)']
+  other_labs_count           integer  [note: 'from other_labs_raw']
+  other_labs_numeric_count   datetime [note: 'from other_labs_raw']
+  other_labs_numeric_mean    varchar  [note: 'from other_labs_raw']
+  other_labs_numeric_max     double   [note: 'from other_labs_raw']
+  other_labs_abnormal_count  varchar  [note: 'from other_labs_raw']
+  other_labs_last_charttime  varchar  [note: 'from other_labs_raw']
+  other_labs_last_itemid     varchar  [note: 'from other_labs_raw']
+  other_labs_last_value      varchar  [note: 'from other_labs_raw']
+  other_labs_last_flag       varchar  [note: 'from other_labs_raw']
 
   indexes {
     (subject_id, hadm_id, day_index) [pk]  // تعریف کلید اصلی مرکب:contentReference[oaicite:2]{index=2}
