@@ -136,23 +136,22 @@ Table merged_table_admission_day {
 
   outputevents_77_col   data  [note: 'from outputevents']
 
+  poe_events_count           varchar [note: 'from poe']
+  poe_first_ordertime        varchar [note: 'from poe']
+  poe_last_ordertime         varchar [note: 'from poe']
+  poe_first_order_provider   varchar [note: 'from poe']
+  poe_last_order_provider    varchar [note: 'from poe']
+  poe_last_order_type        varchar [note: 'from poe']
+  poe_last_order_subtype     varchar [note: 'from poe']
+  poe_last_transaction_type  varchar [note: 'from poe']
+  poe_last_order_status      varchar [note: 'from poe']
+
   itemid_other_labs   integer  [note: 'from other_labs_raw']
   charttime_other_labs datetime [note: 'from other_labs_raw']
   value_other_labs    varchar  [note: 'from other_labs_raw']
   valuenum_other_labs double   [note: 'from other_labs_raw']
   valueuom_other_labs varchar  [note: 'from other_labs_raw']
   flag_other_labs     varchar  [note: 'from other_labs_raw']
-
-  poe_id_poe          varchar [note: 'from poe']
-  poe_seq_poe         integer [note: 'from poe']
-  ordertime_poe       datetime [note: 'from poe']
-  order_type_poe      varchar [note: 'from poe']
-  order_subtype_poe   varchar [note: 'from poe']
-  transaction_type_poe varchar [note: 'from poe']
-  discontinue_of_poe_id_poe varchar [note: 'from poe']
-  discontinued_by_poe_id_poe varchar [note: 'from poe']
-  order_provider_id_poe varchar [note: 'from poe']
-  order_status_poe    varchar [note: 'from poe']
 
   //////////////////////
   // ستون‌های اضافه‌شده از جدول patients (فقط مهم‌ها)
