@@ -1,13 +1,10 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from collections import defaultdict
-import re
 import gc
 import time
-import json
 
-# ---------- config ----------
+
 BASE_DIR = Path(".")
 MERGED_INITIAL_PATH = BASE_DIR / "admissions_expanded.csv"
 PRESC_PATH = BASE_DIR / "prescriptions.csv"
@@ -18,12 +15,12 @@ AGG_PRESC_PATH = BASE_DIR / "agg_prescriptions_daily.csv"
 AGG_PHARM_PATH = BASE_DIR / "agg_pharmacy_daily.csv"
 AGG_EMAR_PATH  = BASE_DIR / "agg_emar_daily.csv"
 
-# chunk sizes (tune these)
+
 SRC_CHUNKSIZE = 200_000
 WRITE_CHUNK = 20_000
 MATCH_CHUNK = 200_000
 
-# ---------- helpers ----------
+
 def nowstr():
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -72,19 +69,19 @@ def consolidate_agg(path: Path, out_path: Path, key_cols=('subject_id','hadm_id'
     pick_cols = pick_cols or []
 
     if not path.exists():
-        # nothing to do
+        
         print(f"[{nowstr()}] consolidate_agg: {path} not found, skipping.")
         return
 
     print(f"[{nowstr()}] Consolidating {path} -> {out_path} ...")
-    # read whole AGG file (these AGG files are usually much smaller than raw sources)
+    
     df = pd.read_csv(path, low_memory=False)
-    # ensure key types
+    
     for c in key_cols:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors='coerce')
 
-    # convert candidate datetime columns if present
+    
     candidate_dt = []
     if pick_by_max:
         candidate_dt.append(pick_by_max)
@@ -92,7 +89,7 @@ def consolidate_agg(path: Path, out_path: Path, key_cols=('subject_id','hadm_id'
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors='coerce')
 
-    # Build aggregation dict for groupby. Use named aggregations for readability.
+    
     agg_dict = {}
     for c in sum_cols:
         if c in df.columns:
@@ -104,7 +101,7 @@ def consolidate_agg(path: Path, out_path: Path, key_cols=('subject_id','hadm_id'
         if c in df.columns:
             agg_dict[c] = 'max'
 
-    # if no aggregation columns present (edge), just drop duplicates using first
+    
     if not agg_dict and not pick_cols:
         out = df.drop_duplicates(subset=list(key_cols)).reset_index(drop=True)
         out.to_csv(out_path, index=False)
@@ -113,31 +110,31 @@ def consolidate_agg(path: Path, out_path: Path, key_cols=('subject_id','hadm_id'
 
     grouped = df.groupby(list(key_cols), dropna=False, as_index=False).agg(agg_dict) if agg_dict else df.groupby(list(key_cols), dropna=False, as_index=False).first()
 
-    # handle pick_by_max for pick_cols
+    
     if pick_by_max and any(pc in df.columns for pc in pick_cols):
-        # For each group, pick the row index in df with max(pick_by_max)
-        # handle groups where pick_by_max is NaT by falling back to first occurrence
+        
+        
         idx = df.groupby(list(key_cols))[pick_by_max].idxmax().dropna()
-        # idx is a Series mapping group -> row index (may miss groups where pick_by_max all NaT)
+        
         picked = df.loc[idx].reset_index(drop=True)
-        # reduce picked to key_cols + pick_cols (and pick_by_max if exists)
+        
         take_cols = list(key_cols) + [c for c in pick_cols if c in picked.columns]
         picked = picked[take_cols]
-        # merge picked into grouped (picked values overwrite grouped's columns if same names)
+        
         grouped = grouped.merge(picked, on=list(key_cols), how='left')
 
-        # for groups not present in picked (all NaT), try to fill pick_cols from first row per group
+        
         missing_mask = grouped[pick_cols[0]].isna() if pick_cols and pick_cols[0] in grouped.columns else None
         if missing_mask is not None and missing_mask.any():
-            # get first row per group
+            
             first_rows = df.groupby(list(key_cols), as_index=False).first()[list(key_cols)+[c for c in pick_cols if c in df.columns]]
             grouped = grouped.merge(first_rows, on=list(key_cols), how='left', suffixes=('','__first'))
-            # fill NaNs in pick_cols with __first
+            
             for c in pick_cols:
                 if c in grouped.columns and (c + "__first") in grouped.columns:
                     grouped[c] = grouped[c].combine_first(grouped[c + "__first"])
                     grouped = grouped.drop(columns=[c + "__first"])
-    # Ensure types for keys are Int64 where possible
+    
     for c in key_cols:
         if c in grouped.columns:
             grouped[c] = pd.to_numeric(grouped[c], errors='coerce').astype('Int64')
@@ -158,7 +155,7 @@ def collect_matching_rows(agg_path: Path, keys_set, usecols=None, parse_dates=No
     matches = []
     usecols = usecols or None
     for c_i, chunk in enumerate(pd.read_csv(agg_path, usecols=usecols, parse_dates=parse_dates or [], chunksize=chunksize, low_memory=True)):
-        # ensure key columns exist
+        
         if not {'subject_id','hadm_id','day_index'}.issubset(set(chunk.columns)):
             continue
         chunk['subject_id'] = pd.to_numeric(chunk['subject_id'], errors='coerce').astype('Int64')
@@ -177,11 +174,11 @@ def collect_matching_rows(agg_path: Path, keys_set, usecols=None, parse_dates=No
         return pd.DataFrame(columns=(usecols or []))
 
 
-# -------------------- run --------------------
+
 import gc
 admit_dict = build_admit_map(MERGED_INITIAL_PATH)
 
-# ---------- Phase 1: aggregate prescriptions ----------
+
 print(f"[{nowstr()}] Phase 1 — aggregate prescriptions -> {AGG_PRESC_PATH}")
 if AGG_PRESC_PATH.exists(): AGG_PRESC_PATH.unlink()
 
@@ -195,7 +192,7 @@ total_out = 0
 for i, chunk in enumerate(pd.read_csv(PRESC_PATH, usecols=presc_usecols, parse_dates=presc_parse_dates, chunksize=SRC_CHUNKSIZE, low_memory=True), start=1):
     t0 = time.time()
     print(f"[{nowstr()}] Presc chunk {i} rows={len(chunk):,}")
-    # cast ids
+    
     if 'subject_id' in chunk.columns:
         chunk['subject_id'] = pd.to_numeric(chunk['subject_id'], errors='coerce').astype('Int64')
         chunk['hadm_id'] = pd.to_numeric(chunk['hadm_id'], errors='coerce').astype('Int64')
@@ -239,7 +236,7 @@ for i, chunk in enumerate(pd.read_csv(PRESC_PATH, usecols=presc_usecols, parse_d
 
 print(f"[{nowstr()}] Prescriptions aggregation done. total agg rows (unconsolidated): {total_out}")
 
-# consolidate the AGG presc into unique keys
+
 consolidate_agg(AGG_PRESC_PATH, AGG_PRESC_PATH,
                 key_cols=('subject_id','hadm_id','day_index'),
                 sum_cols=['presc_orders_count'],
@@ -248,7 +245,7 @@ consolidate_agg(AGG_PRESC_PATH, AGG_PRESC_PATH,
                 pick_by_max='presc_last_stop',
                 pick_cols=['presc_last_drug','presc_last_route'])
 
-# ---------- Phase 2: aggregate pharmacy ----------
+
 print(f"[{nowstr()}] Phase 2 — aggregate pharmacy -> {AGG_PHARM_PATH}")
 if AGG_PHARM_PATH.exists(): AGG_PHARM_PATH.unlink()
 
@@ -310,7 +307,7 @@ consolidate_agg(AGG_PHARM_PATH, AGG_PHARM_PATH,
                 pick_cols=['pharm_last_med','pharm_last_route'])
 
 
-# ---------- Phase 3: aggregate emar ----------
+
 print(f"[{nowstr()}] Phase 3 — aggregate emar -> {AGG_EMAR_PATH}")
 if AGG_EMAR_PATH.exists(): AGG_EMAR_PATH.unlink()
 
@@ -370,7 +367,7 @@ consolidate_agg(AGG_EMAR_PATH, AGG_EMAR_PATH,
                 pick_cols=['emar_last_event','emar_last_med'])
 
 
-# -------------------- Phase 4: merge aggregated into merged_initial in chunks --------------------
+
 OUT_PATH = BASE_DIR / "merged_with_medications.csv"
 if OUT_PATH.exists(): OUT_PATH.unlink()
 
@@ -384,20 +381,20 @@ for mchunk in pd.read_csv(MERGED_INITIAL_PATH, chunksize=WRITE_CHUNK, parse_date
     mchunk['subject_id'] = pd.to_numeric(mchunk['subject_id'], errors='coerce').astype('Int64')
     mchunk['hadm_id'] = pd.to_numeric(mchunk['hadm_id'], errors='coerce').astype('Int64')
     mchunk['day_index'] = pd.to_numeric(mchunk['day_index'], errors='coerce').astype('Int64')
-    # build key set
+    
     keys = set((int(r['subject_id']), int(r['hadm_id']), int(r['day_index'])) for _, r in mchunk[['subject_id','hadm_id','day_index']].iterrows())
-    # collect matching rows (each consolidated AGG is now unique per key)
+    
     presc_match = collect_matching_rows(AGG_PRESC_PATH, keys) if AGG_PRESC_PATH.exists() else pd.DataFrame()
     pharm_match = collect_matching_rows(AGG_PHARM_PATH, keys) if AGG_PHARM_PATH.exists() else pd.DataFrame()
     emar_match  = collect_matching_rows(AGG_EMAR_PATH, keys)  if AGG_EMAR_PATH.exists() else pd.DataFrame()
-    # merge (left) - since AGG files were consolidated, no key will duplicate
+    
     if not presc_match.empty:
         mchunk = mchunk.merge(presc_match, on=['subject_id','hadm_id','day_index'], how='left')
     if not pharm_match.empty:
         mchunk = mchunk.merge(pharm_match, on=['subject_id','hadm_id','day_index'], how='left')
     if not emar_match.empty:
         mchunk = mchunk.merge(emar_match, on=['subject_id','hadm_id','day_index'], how='left')
-    # write
+    
     mchunk.to_csv(OUT_PATH, mode='w' if first_write else 'a', index=False, header=first_write)
     first_write = False
     print(f"[{nowstr()}] Written merged chunk {mchunk_no} (took {time.time()-t0:.1f}s).")

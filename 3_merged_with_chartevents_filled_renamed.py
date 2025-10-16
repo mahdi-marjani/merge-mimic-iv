@@ -1,11 +1,8 @@
 import pandas as pd
-import numpy as np
 from pathlib import Path
 from collections import defaultdict
 import re
 import gc
-import time
-import json
 
 merged_initial = pd.read_csv("admissions_expanded.csv")
 

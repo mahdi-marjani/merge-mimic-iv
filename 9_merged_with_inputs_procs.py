@@ -1,22 +1,12 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from collections import defaultdict
-import re
 import gc
 import time
-import json
 
-# corrected_merge_inputs_procs.py
-import time
-import gc
-from pathlib import Path
-import pandas as pd
-import numpy as np
 
-# --------- CONFIG ----------
 BASE = Path(".")
-MERGED_INITIAL_PATH = BASE / "admissions_expanded.csv"   # existing admission-day base
+MERGED_INITIAL_PATH = BASE / "admissions_expanded.csv"   
 ING_PATH  = BASE / "ingredientevents.csv"
 INP_PATH  = BASE / "inputevents.csv"
 PROC_PATH = BASE / "procedureevents.csv"
@@ -25,12 +15,12 @@ AGG_ING_PATH  = BASE / "agg_ingredient_daily.csv"
 AGG_INP_PATH  = BASE / "agg_input_daily.csv"
 AGG_PROC_PATH = BASE / "agg_procedure_daily.csv"
 
-SRC_CHUNKSIZE = 200_000   # reduce if memory pressure
-WRITE_CHUNK    = 20_000   # rows of merged_initial to process per write
-MATCH_CHUNK    = 200_000   # chunk size when scanning agg csvs for matches
-# ---------------------------
+SRC_CHUNKSIZE = 200_000   
+WRITE_CHUNK    = 20_000   
+MATCH_CHUNK    = 200_000   
 
-# ---------- helpers ----------
+
+
 def nowstr(): return time.strftime("%Y-%m-%d %H:%M:%S")
 def parse_numeric(x):
     if pd.isna(x): return np.nan
@@ -81,13 +71,13 @@ def _choose_agg_for_col(col_name):
         return 'sum'
     if 'max' in name or name.endswith('_max'):
         return 'max'
-    # amounts -> sum
+    
     if 'amount' in name or 'total' in name:
         return 'sum'
-    # rate or val or _num -> prefer max (for numeric measures we often want max)
+    
     if 'rate' in name or name.endswith('_num') or 'val' in name or 'value' in name:
         return 'max'
-    # fallback: last non-null string
+    
     return lambda s: s.dropna().iloc[-1] if s.dropna().shape[0] > 0 else pd.NA
 
 def collect_matching_rows(agg_path, keys_set, usecols=None, parse_dates=None, chunksize=MATCH_CHUNK):
@@ -99,16 +89,16 @@ def collect_matching_rows(agg_path, keys_set, usecols=None, parse_dates=None, ch
     if not agg_path.exists() or not keys_set:
         return pd.DataFrame(columns=(usecols or []))
 
-    # prepare set of string keys for fast isin
+    
     keys_s = set(key_str(s,h,d) for (s,h,d) in keys_set)
 
     matches = []
     cols_seen = None
     for chunk in pd.read_csv(agg_path, usecols=usecols, parse_dates=parse_dates, chunksize=chunksize, low_memory=True):
-        # ensure expected key columns exist in this chunk
+        
         if not {'subject_id','hadm_id','day_index'}.issubset(set(chunk.columns)):
             continue
-        # normalize types
+        
         chunk['subject_id'] = pd.to_numeric(chunk['subject_id'], errors='coerce').astype('Int64')
         chunk['hadm_id'] = pd.to_numeric(chunk['hadm_id'], errors='coerce').astype('Int64')
         chunk['day_index'] = pd.to_numeric(chunk['day_index'], errors='coerce').astype('Int64')
@@ -127,30 +117,30 @@ def collect_matching_rows(agg_path, keys_set, usecols=None, parse_dates=None, ch
 
     df = pd.concat(matches, ignore_index=True)
 
-    # ensure keys are typed properly
+    
     df['subject_id'] = pd.to_numeric(df['subject_id'], errors='coerce').astype('Int64')
     df['hadm_id'] = pd.to_numeric(df['hadm_id'], errors='coerce').astype('Int64')
     df['day_index'] = pd.to_numeric(df['day_index'], errors='coerce').astype('Int64')
 
-    # Build aggregation dict using heuristics
+    
     agg_dict = {}
     for col in df.columns:
         agg_dict[col] = _choose_agg_for_col(col)
 
-    # Perform groupby aggregation to collapse duplicates
+    
     grouped = df.groupby(['subject_id','hadm_id','day_index'], as_index=False).agg(agg_dict)
 
-    # Post-process: ensure columns for keys are Int64 again
+    
     grouped['subject_id'] = pd.to_numeric(grouped['subject_id'], errors='coerce').astype('Int64')
     grouped['hadm_id'] = pd.to_numeric(grouped['hadm_id'], errors='coerce').astype('Int64')
     grouped['day_index'] = pd.to_numeric(grouped['day_index'], errors='coerce').astype('Int64')
 
     return grouped
 
-# ---------- prep ----------
+
 admit_dict = build_admit_map(MERGED_INITIAL_PATH)
 
-# ---------- Phase A: agg ingredientevents ----------
+
 print(f"[{nowstr()}] Phase A: aggregate ingredientevents -> {AGG_ING_PATH}")
 if AGG_ING_PATH.exists(): AGG_ING_PATH.unlink()
 hdr = read_header(ING_PATH)
@@ -167,16 +157,16 @@ for i, chunk in enumerate(pd.read_csv(ING_PATH, usecols=usecols, parse_dates=par
     before=len(chunk); chunk=chunk[chunk['admit_date'].notna()].copy(); dropped=before-len(chunk)
     if dropped: print(f"  -> dropped {dropped:,} ing rows w/o admit")
     if chunk.empty: del chunk; gc.collect(); continue
-    # compute day_index by starttime (fallback storetime/endtime)
+    
     chunk['event_time']=pd.to_datetime(chunk.get('starttime', pd.NaT),errors='coerce').fillna(pd.to_datetime(chunk.get('storetime', pd.NaT),errors='coerce')).fillna(pd.to_datetime(chunk.get('endtime', pd.NaT),errors='coerce'))
     chunk['chart_date']=chunk['event_time'].dt.normalize()
     chunk['day_index']= (chunk['chart_date'] - chunk['admit_date']).dt.days.fillna(0).astype(int); chunk.loc[chunk['day_index']<0,'day_index']=0
-    # numeric parsing
+    
     chunk['amount_num']=chunk['amount'].apply(parse_numeric) if 'amount' in chunk.columns else np.nan
     chunk['rate_num']=chunk['rate'].apply(parse_numeric) if 'rate' in chunk.columns else np.nan
-    # text
+    
     chunk['item_text']=chunk['itemid'].astype(str).str.strip()
-    # aggregate: sum amounts (ingredients sum often makes sense), max rate, last status/text, count
+    
     agg = chunk.groupby(['subject_id','hadm_id','day_index'], as_index=False).agg(
         ing_events_count = ('item_text','count'),
         ing_total_amount = ('amount_num','sum'),
@@ -191,7 +181,7 @@ for i, chunk in enumerate(pd.read_csv(ING_PATH, usecols=usecols, parse_dates=par
     del chunk, agg; gc.collect()
 print(f"[{nowstr()}] ingredient aggregation done. total agg rows (raw appended): {total}")
 
-# ---------- Phase B: agg inputevents ----------
+
 print(f"[{nowstr()}] Phase B: aggregate inputevents -> {AGG_INP_PATH}")
 if AGG_INP_PATH.exists(): AGG_INP_PATH.unlink()
 hdr = read_header(INP_PATH)
@@ -216,7 +206,7 @@ for i, chunk in enumerate(pd.read_csv(INP_PATH, usecols=usecols, parse_dates=par
     chunk['totalamount_num']=chunk['totalamount'].apply(parse_numeric) if 'totalamount' in chunk.columns else np.nan
     chunk['item_text']=chunk['itemid'].astype(str)
     chunk['ordercat_text']=chunk['ordercategoryname'].astype(str) if 'ordercategoryname' in chunk.columns else pd.NA
-    # aggregations: sum amounts (for fluid totals), max rate, counts, last textual descriptors
+    
     agg = chunk.groupby(['subject_id','hadm_id','day_index'], as_index=False).agg(
         input_events_count = ('item_text','count'),
         input_total_amount = ('amount_num','sum'),
@@ -232,7 +222,7 @@ for i, chunk in enumerate(pd.read_csv(INP_PATH, usecols=usecols, parse_dates=par
     del chunk, agg; gc.collect()
 print(f"[{nowstr()}] inputevents aggregation done. total agg rows (raw appended): {total}")
 
-# ---------- Phase C: agg procedureevents ----------
+
 print(f"[{nowstr()}] Phase C: aggregate procedureevents -> {AGG_PROC_PATH}")
 if AGG_PROC_PATH.exists(): AGG_PROC_PATH.unlink()
 hdr = read_header(PROC_PATH)
@@ -269,7 +259,7 @@ for i, chunk in enumerate(pd.read_csv(PROC_PATH, usecols=usecols, parse_dates=pa
     del chunk, agg; gc.collect()
 print(f"[{nowstr()}] procedure aggregation done. total agg rows (raw appended): {total}")
 
-# ---------- Phase D: merge aggregated files into merged_initial in chunks ----------
+
 OUT = BASE / "merged_with_inputs_procs.csv"
 if OUT.exists(): OUT.unlink()
 print(f"[{nowstr()}] Phase D: merge aggregated files into {OUT} in chunks (write_chunk={WRITE_CHUNK})")
@@ -281,15 +271,15 @@ for mchunk in pd.read_csv(MERGED_INITIAL_PATH, chunksize=WRITE_CHUNK, parse_date
     mchunk['hadm_id']=pd.to_numeric(mchunk['hadm_id'],errors='coerce').astype('Int64')
     mchunk['day_index']=pd.to_numeric(mchunk['day_index'],errors='coerce').astype('Int64')
 
-    # build keys set for this chunk
+    
     keys = set((int(r['subject_id']), int(r['hadm_id']), int(r['day_index'])) for _,r in mchunk[['subject_id','hadm_id','day_index']].iterrows())
 
-    # collect matches and collapse duplicates internally
+    
     ing_match = collect_matching_rows(AGG_ING_PATH, keys, usecols=None) if AGG_ING_PATH.exists() else pd.DataFrame()
     inp_match = collect_matching_rows(AGG_INP_PATH, keys, usecols=None) if AGG_INP_PATH.exists() else pd.DataFrame()
     proc_match = collect_matching_rows(AGG_PROC_PATH, keys, usecols=None) if AGG_PROC_PATH.exists() else pd.DataFrame()
 
-    # Now merge - since collected matches are already deduplicated per key, no Cartesian duplicates will occur
+    
     if not ing_match.empty:
         mchunk = mchunk.merge(ing_match, on=['subject_id','hadm_id','day_index'], how='left')
     if not inp_match.empty:

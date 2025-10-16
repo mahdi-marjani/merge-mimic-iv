@@ -1,13 +1,8 @@
 import pandas as pd
-import numpy as np
 from pathlib import Path
-from collections import defaultdict
-import re
 import gc
-import time
-import json
 
-# === CONFIG ===
+
 procedures_path = Path("procedures_icd.csv")
 dprocedures_path = Path("d_icd_procedures.csv")
 merged_initial_path = Path("admissions_expanded.csv")
@@ -15,26 +10,26 @@ intermediate_chunks_path = Path("procedures_daily_chunks.csv")
 final_daily_path = Path("procedures_daily_final.csv")
 out_merged_path = Path("merged_with_procedures.csv")
 
-chunksize = 500_000   # tune to your environment
+chunksize = 500_000   
 write_chunk = 20000
 
-# === 0) sanity checks ===
+
 for p in (procedures_path, dprocedures_path, merged_initial_path):
     if not p.exists():
         raise FileNotFoundError(f"Required file not found: {p.resolve()}")
 
-# === 1) build admit_date lookup from merged_initial ===
+
 print("Loading merged_initial admissions (admit_time -> admit_date map)...")
 mi_cols = ['subject_id', 'hadm_id', 'admittime']
 mi = pd.read_csv(merged_initial_path, usecols=mi_cols, parse_dates=['admittime'], low_memory=False)
 mi['subject_id'] = pd.to_numeric(mi['subject_id'], errors='coerce').astype('Int64')
 mi['hadm_id'] = pd.to_numeric(mi['hadm_id'], errors='coerce').astype('Int64')
 
-# take first admittime per (subject_id, hadm_id)
+
 admit_map = mi.groupby(['subject_id', 'hadm_id'], dropna=False)['admittime'].first().reset_index().rename(columns={'admittime':'admit_time'})
 admit_map['admit_date'] = pd.to_datetime(admit_map['admit_time'], errors='coerce').dt.normalize()
 
-# make a dict: (int(subject_id), int(hadm_id)) -> admit_date (Timestamp) for fast lookup
+
 admit_dict = {}
 for r in admit_map.itertuples(index=False):
     try:
@@ -46,7 +41,7 @@ print("Admit map size:", len(admit_dict))
 
 del mi, admit_map; gc.collect()
 
-# === 2) chunked read of procedures_icd -> per-chunk daily aggregates ===
+
 print("Streaming procedures_icd in chunks and writing per-chunk daily aggregates...")
 first_out = True
 total_skipped_no_admit = 0
@@ -59,42 +54,42 @@ reader = pd.read_csv(procedures_path,
 
 for chunk_i, chunk in enumerate(reader, start=1):
     total_rows_processed += len(chunk)
-    # normalize ids
+    
     chunk['subject_id'] = pd.to_numeric(chunk['subject_id'], errors='coerce').astype('Int64')
     chunk['hadm_id'] = pd.to_numeric(chunk['hadm_id'], errors='coerce').astype('Int64')
 
-    # drop rows with missing ids
+    
     chunk = chunk[chunk['subject_id'].notna() & chunk['hadm_id'].notna()]
     if chunk.empty:
         print(f"Chunk {chunk_i}: no valid subject/hadm ids, skipping")
         continue
 
-    # icd_code as cleaned string
+    
     chunk['icd_code'] = chunk['icd_code'].astype(str).str.strip()
-    # map admit_date quickly using vectorized approach via list comprehension (safe for chunk sizes)
+    
     keys = list(zip(chunk['subject_id'].astype(int), chunk['hadm_id'].astype(int)))
     chunk['admit_date'] = [admit_dict.get(k, pd.NaT) for k in keys]
 
-    # drop rows without admit_date (no matching admission in merged_initial)
+    
     missing_admit_mask = chunk['admit_date'].isna()
     n_missing = int(missing_admit_mask.sum())
     total_skipped_no_admit += n_missing
     if n_missing:
-        # keep memory low by filtering now
+        
         chunk = chunk.loc[~missing_admit_mask]
     if chunk.empty:
         print(f"Chunk {chunk_i}: {n_missing} rows had no admit_date; chunk empty after drop -> continue")
         continue
 
-    # compute day_index (chart_date normalized minus admit_date), clipped to >= 0
+    
     chunk['chart_date'] = pd.to_datetime(chunk['chartdate'], errors='coerce').dt.normalize()
     chunk['day_index'] = (chunk['chart_date'] - chunk['admit_date']).dt.days.fillna(0).astype(int)
     chunk.loc[chunk['day_index'] < 0, 'day_index'] = 0
 
-    # group per day and aggregate:
-    # - proc_count: number of procedure rows that day
-    # - last_proc_charttime: most recent chartdate (max)
-    # - proc_codes: unique semicolon-separated icd_code strings (sorted)
+    
+    
+    
+    
     def join_unique_codes(series):
         s = set([str(x).strip() for x in series.dropna() if str(x).strip() not in ("", "nan", "None")])
         if not s:
@@ -108,7 +103,7 @@ for chunk_i, chunk in enumerate(reader, start=1):
         proc_codes = ('icd_code', join_unique_codes)
     ).reset_index()
 
-    # write per-chunk aggregates (append)
+    
     df_agg.to_csv(intermediate_chunks_path, mode='w' if first_out else 'a', index=False, header=first_out)
     first_out = False
 
@@ -119,14 +114,14 @@ for chunk_i, chunk in enumerate(reader, start=1):
 print("Streaming done. Total rows processed:", total_rows_processed)
 print("Total rows skipped because no matching admission:", total_skipped_no_admit)
 
-# === 3) finalize aggregated daily procedures by grouping intermediate file ===
+
 print("Reading intermediate chunks and final-aggregating...")
 if not intermediate_chunks_path.exists():
     raise FileNotFoundError(f"Expected intermediate file {intermediate_chunks_path} not found.")
 
 daily = pd.read_csv(intermediate_chunks_path, parse_dates=['last_proc_charttime'], low_memory=False)
 
-# final aggregation: sum counts, max(last_proc_charttime), union of proc_codes across chunked writes
+
 def union_semicolon_lists(series):
     sset = set()
     for val in series.dropna():
@@ -148,7 +143,7 @@ final.to_csv(final_daily_path, index=False)
 print("Final per-day procedures saved to:", final_daily_path)
 del daily; gc.collect()
 
-# === 4) optionally map codes -> titles from d_icd_procedures (if file available) ===
+
 print("Loading d_icd_procedures to map codes -> titles (if available)...")
 dproc = pd.read_csv(dprocedures_path, dtype=str, low_memory=False)
 dproc['icd_code'] = dproc['icd_code'].astype(str).str.strip()
@@ -163,34 +158,34 @@ def map_codes_to_titles(codes_str):
     return ";".join(titles)
 
 final['proc_titles'] = final['proc_codes'].apply(map_codes_to_titles)
-# Save updated final
+
 final.to_csv(final_daily_path, index=False)
 print("Final per-day procedures (with titles) saved to:", final_daily_path)
 
-# === 5) LEFT JOIN final daily procedures into merged_initial and write merged file ===
+
 print("Merging final daily procedure aggregates into merged_initial master table...")
 merged = pd.read_csv(merged_initial_path, low_memory=False, parse_dates=['admittime','dischtime','deathtime'])
-# ensure types
+
 merged['subject_id'] = pd.to_numeric(merged['subject_id'], errors='coerce').astype('Int64')
 merged['hadm_id'] = pd.to_numeric(merged['hadm_id'], errors='coerce').astype('Int64')
 merged['day_index'] = pd.to_numeric(merged['day_index'], errors='coerce').astype('Int64')
 
-# load final daily procedures
+
 proc_daily = pd.read_csv(final_daily_path, parse_dates=['last_proc_charttime'], low_memory=False)
 proc_daily['subject_id'] = pd.to_numeric(proc_daily['subject_id'], errors='coerce').astype('Int64')
 proc_daily['hadm_id'] = pd.to_numeric(proc_daily['hadm_id'], errors='coerce').astype('Int64')
 proc_daily['day_index'] = pd.to_numeric(proc_daily['day_index'], errors='coerce').astype('Int64')
 
-# left join
+
 merged_with_proc = merged.merge(proc_daily, on=['subject_id','hadm_id','day_index'], how='left')
 
-# optional: fill NaN counts with 0
+
 merged_with_proc['proc_count'] = merged_with_proc['proc_count'].fillna(0).astype('Int64')
-# keep proc_codes and proc_titles as empty string where missing
+
 merged_with_proc['proc_codes'] = merged_with_proc['proc_codes'].fillna("").astype(str)
 merged_with_proc['proc_titles'] = merged_with_proc['proc_titles'].fillna("").astype(str)
 
-# write final merged CSV in chunks (to avoid huge memory spikes)
+
 print("Writing final merged file (chunked writes)...")
 n_rows = len(merged_with_proc)
 first = True

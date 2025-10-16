@@ -1,13 +1,10 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from collections import defaultdict
-import re
 import gc
 import time
-import json
 
-# ---------------- CONFIG ----------------
+
 BASE = Path(".")
 MERGED_INITIAL_PATH = BASE / "admissions_expanded.csv"
 POE_PATH = BASE / "poe.csv"
@@ -15,12 +12,12 @@ POE_PATH = BASE / "poe.csv"
 AGG_POE_PATH = BASE / "agg_poe_daily.csv"
 OUT_MERGED_POE = BASE / "merged_with_poe.csv"
 
-SRC_CHUNKSIZE = 200_000   # read size for poe.csv
-WRITE_CHUNK = 20_000      # rows of merged_initial processed per write
-MATCH_CHUNK = 200_000     # chunk size when scanning agg csvs for matches
-# ----------------------------------------
+SRC_CHUNKSIZE = 200_000   
+WRITE_CHUNK = 20_000      
+MATCH_CHUNK = 200_000     
 
-# ---------- helpers ----------
+
+
 def nowstr(): return time.strftime("%Y-%m-%d %H:%M:%S")
 def parse_numeric(x):
     if pd.isna(x): return np.nan
@@ -66,8 +63,8 @@ def _choose_agg_for_col(col_name):
     if 'amount' in name:
         return 'sum'
     if 'rate' in name or name.endswith('_num') or 'val' in name or 'value' in name or 'ordertime' in name:
-        # for ordertime we want min/max, but groupby agg requires consistent functions:
-        # ordetime we'll handle separately; here default to 'max' for numeric-like
+        
+        
         return 'max'
     return lambda s: s.dropna().iloc[-1] if s.dropna().shape[0] > 0 else pd.NA
 
@@ -102,21 +99,21 @@ def collect_matching_rows(agg_path, keys_set, usecols=None, parse_dates=None, ch
         return pd.DataFrame(columns=(usecols or []))
 
     df = pd.concat(matches, ignore_index=True)
-    # ensure types
+    
     df['subject_id'] = pd.to_numeric(df['subject_id'], errors='coerce').astype('Int64')
     df['hadm_id'] = pd.to_numeric(df['hadm_id'], errors='coerce').astype('Int64')
     df['day_index'] = pd.to_numeric(df['day_index'], errors='coerce').astype('Int64')
 
-    # choose agg per column
+    
     agg_dict = {}
     for col in df.columns:
         agg_dict[col] = _choose_agg_for_col(col)
 
-    # group and aggregate
+    
     grouped = df.groupby(['subject_id','hadm_id','day_index'], as_index=False).agg(agg_dict)
 
-    # post-process ordertime columns if present: compute min/max from original matches if needed
-    # (In our AGG_POE we included first/last ordertime already; if not, this block can be extended.)
+    
+    
 
     grouped['subject_id'] = pd.to_numeric(grouped['subject_id'], errors='coerce').astype('Int64')
     grouped['hadm_id'] = pd.to_numeric(grouped['hadm_id'], errors='coerce').astype('Int64')
@@ -124,14 +121,14 @@ def collect_matching_rows(agg_path, keys_set, usecols=None, parse_dates=None, ch
 
     return grouped
 
-# ---------- prepare admit_map ----------
+
 admit_dict = build_admit_map(MERGED_INITIAL_PATH)
 
-# ---------- Phase A: aggregate poe.csv -> AGG_POE_PATH ----------
+
 print(f"[{nowstr()}] Phase A: aggregate poe -> {AGG_POE_PATH}")
 if AGG_POE_PATH.exists(): AGG_POE_PATH.unlink()
 hdr = read_header(POE_PATH)
-# choose columns we expect; safe to include extras if present
+
 use_want = ['poe_id','poe_seq','subject_id','hadm_id','ordertime','order_type','order_subtype','transaction_type','discontinue_of_poe_id','discontinued_by_poe_id','order_provider_id','order_status']
 usecols = [c for c in use_want if c in hdr]
 parse_dates = ['ordertime'] if 'ordertime' in usecols else []
@@ -139,14 +136,14 @@ parse_dates = ['ordertime'] if 'ordertime' in usecols else []
 first_out=True; total=0
 for i, chunk in enumerate(pd.read_csv(POE_PATH, usecols=usecols, parse_dates=parse_dates, chunksize=SRC_CHUNKSIZE, low_memory=True), start=1):
     t0=time.time(); print(f"[{nowstr()}] poe chunk {i} rows={len(chunk):,}")
-    # normalize ids
+    
     if 'subject_id' not in chunk.columns or 'hadm_id' not in chunk.columns:
         print("ERROR: poe missing subject_id or hadm_id columns. Aborting.")
         raise SystemExit(1)
     chunk['subject_id']=pd.to_numeric(chunk['subject_id'],errors='coerce').astype('Int64')
     chunk['hadm_id']=pd.to_numeric(chunk['hadm_id'],errors='coerce').astype('Int64')
 
-    # map admit_date
+    
     keys = list(zip(chunk['subject_id'].astype('Int64').astype(object), chunk['hadm_id'].astype('Int64').astype(object)))
     chunk['admit_date'] = [admit_dict.get((int(s), int(h)), pd.NaT) if not (pd.isna(s) or pd.isna(h)) else pd.NaT for s,h in keys]
 
@@ -158,13 +155,13 @@ for i, chunk in enumerate(pd.read_csv(POE_PATH, usecols=usecols, parse_dates=par
     if chunk.empty:
         del chunk; gc.collect(); continue
 
-    # event_time and day_index: use ordertime
+    
     chunk['event_time'] = pd.to_datetime(chunk.get('ordertime', pd.NaT), errors='coerce')
     chunk['chart_date'] = chunk['event_time'].dt.normalize()
     chunk['day_index'] = (chunk['chart_date'] - chunk['admit_date']).dt.days.fillna(0).astype(int)
     chunk.loc[chunk['day_index'] < 0, 'day_index'] = 0
 
-    # ensure provider and status columns exist
+    
     if 'order_provider_id' not in chunk.columns:
         chunk['order_provider_id'] = pd.NA
     if 'order_status' not in chunk.columns:
@@ -176,14 +173,14 @@ for i, chunk in enumerate(pd.read_csv(POE_PATH, usecols=usecols, parse_dates=par
     if 'transaction_type' not in chunk.columns:
         chunk['transaction_type'] = pd.NA
 
-    # string/text normalization
+    
     chunk['order_provider_id'] = chunk['order_provider_id'].astype(str).replace('nan','').replace('None','').replace('NoneType','').fillna(pd.NA)
     chunk['order_status'] = chunk['order_status'].astype(str).replace('nan','').replace('None','').fillna(pd.NA)
     chunk['order_type'] = chunk['order_type'].astype(str).replace('nan','').replace('None','').fillna(pd.NA)
     chunk['order_subtype'] = chunk['order_subtype'].astype(str).replace('nan','').replace('None','').fillna(pd.NA)
     chunk['transaction_type'] = chunk['transaction_type'].astype(str).replace('nan','').replace('None','').fillna(pd.NA)
 
-    # Aggregations per chunk (per day)
+    
     agg = chunk.groupby(['subject_id','hadm_id','day_index'], as_index=False).agg(
         poe_events_count = ('poe_id','count'),
         poe_first_ordertime = ('event_time','min'),
@@ -196,12 +193,12 @@ for i, chunk in enumerate(pd.read_csv(POE_PATH, usecols=usecols, parse_dates=par
         poe_last_order_status = ('order_status', lambda s: s.dropna().astype(str).iloc[-1] if s.dropna().shape[0]>0 else pd.NA)
     )
 
-    # ensure key dtypes
+    
     agg['subject_id']=agg['subject_id'].astype('Int64')
     agg['hadm_id']=agg['hadm_id'].astype('Int64')
     agg['day_index']=agg['day_index'].astype('Int64')
 
-    # write chunked aggregated rows (may produce multiple rows per key across chunks; will collapse on merge)
+    
     agg.to_csv(AGG_POE_PATH, mode='w' if first_out else 'a', index=False, header=first_out)
     first_out=False
     total += len(agg)
@@ -210,7 +207,7 @@ for i, chunk in enumerate(pd.read_csv(POE_PATH, usecols=usecols, parse_dates=par
 
 print(f"[{nowstr()}] POE aggregation done. raw agg rows appended: {total}")
 
-# ---------- Phase B: merge aggregated poe into merged_initial in chunks ----------
+
 print(f"[{nowstr()}] Phase B: merge aggregated poe into {OUT_MERGED_POE} in chunks (write_chunk={WRITE_CHUNK})")
 if OUT_MERGED_POE.exists(): OUT_MERGED_POE.unlink()
 first_write = True
@@ -226,12 +223,12 @@ for mchunk in pd.read_csv(MERGED_INITIAL_PATH, chunksize=WRITE_CHUNK, parse_date
 
     keys = set((int(r['subject_id']), int(r['hadm_id']), int(r['day_index'])) for _,r in mchunk[['subject_id','hadm_id','day_index']].iterrows())
 
-    # collect matching rows from AGG_POE_PATH and collapse duplicates per key
+    
     poe_match = collect_matching_rows(AGG_POE_PATH, keys, usecols=None, parse_dates=['poe_first_ordertime','poe_last_ordertime']) if AGG_POE_PATH.exists() else pd.DataFrame()
 
     if not poe_match.empty:
-        # note: parse_dates argument above may or may not have effect since agg csv stores ISO timestamps;
-        # ensure datetime dtype for ordertime cols
+        
+        
         if 'poe_first_ordertime' in poe_match.columns:
             poe_match['poe_first_ordertime'] = pd.to_datetime(poe_match['poe_first_ordertime'], errors='coerce')
         if 'poe_last_ordertime' in poe_match.columns:
@@ -239,7 +236,7 @@ for mchunk in pd.read_csv(MERGED_INITIAL_PATH, chunksize=WRITE_CHUNK, parse_date
 
         mchunk = mchunk.merge(poe_match, on=['subject_id','hadm_id','day_index'], how='left')
 
-    # write chunk
+    
     mchunk.to_csv(OUT_MERGED_POE, mode='w' if first_write else 'a', index=False, header=first_write)
     first_write = False
     print(f"[{nowstr()}] Written merged chunk {mchunk_no} (took {time.time()-t0:.1f}s)")
